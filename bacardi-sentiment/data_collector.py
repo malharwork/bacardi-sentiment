@@ -1,754 +1,503 @@
 import praw
 import requests
+import sqlite3
 from datetime import datetime, timedelta
 import time
-import re
-import json
-from urllib.parse import quote
+import random
+from config import Config
+from database import DatabaseManager
 
-try:
-    from config_local import *
-    print("✅ Config loaded from config_local.py")
-except ImportError:
-    print("❌ config_local.py not found - using fallback")
-    REDDIT_CLIENT_ID = "aAwa29mpNMRzQKtgkfebQw"
-    REDDIT_CLIENT_SECRET = "TMPXj33kr77IsgGDnoWL1rADnCRAAw"
-    REDDIT_USERNAME = "Low-Iron-2783"
-    REDDIT_PASSWORD = "uZD2.aBXFsb)B=/"
-    
-    # API credentials for platforms
-    YOUTUBE_API_KEY = "AIzaSyDX43Noo2pNguffliKNtCamVMdvscEiiCs"
-    FACEBOOK_ACCESS_TOKEN = "EACEdBhRweVMBO5OipxlZA9q7KE8uzze0SCZAqkU6n1mlQZA6XKYaJuS6ZBHzIoKCfrtwbfL8E5AFGQvNFqCRKgbLwhZAGOqut1EpU6ZAKXRERwJqH6HTHcGSyQ40agmRO9ZBVOVkfr9FOZCNaZBU3tCLDqhnaL1ZA3h3QFZAt2Qt4XHYWLAZAv6MS7wp5ZBUIhzvpeJMWFRbXXjPrFTOiySkbiQBuXv6xoXtvZAMx5E9v47P0fMUbkYpwZD"
-    INSTAGRAM_ACCESS_TOKEN = "your_instagram_access_token"
-# Brand keywords
-BRAND_KEYWORDS = [
-    'bacardi', 
-    'breezer', 
-    'bacardi rum', 
-    'white rum bacardi',
-    'bacardi superior', 
-    'bacardi gold'
-]
-
-class SocialMediaCollector:
+class EnhancedDataCollector:
     def __init__(self):
-        self.setup_apis()
-        print("Social Media Collector initialized")
-    
-    def setup_apis(self):
-        """Initialize API connections"""
-        # Reddit API setup
+        self.config = Config()
+        self.db = DatabaseManager()
+        
+        # Initialize Reddit API
         try:
-            if not REDDIT_CLIENT_ID or REDDIT_CLIENT_ID == "your_reddit_client_id":
-                print("⚠️ Reddit credentials not configured")
-                self.reddit = None
-            else:
-                self.reddit = praw.Reddit(
-                    client_id=REDDIT_CLIENT_ID,
-                    client_secret=REDDIT_CLIENT_SECRET,
-                    username=REDDIT_USERNAME,
-                    password=REDDIT_PASSWORD,
-                    user_agent="BacardiSentimentPOC/1.0"
-                )
-                
-                # Test Reddit connection
-                user = self.reddit.user.me()
-                print(f"✅ Reddit API connected as: {user}")
-                
+            self.reddit = praw.Reddit(
+                client_id=self.config.reddit_client_id,
+                client_secret=self.config.reddit_client_secret,
+                user_agent=self.config.reddit_user_agent
+            )
+            print("✅ Reddit API initialized successfully")
         except Exception as e:
-            print(f"❌ Reddit API setup failed: {e}")
+            print(f"❌ Reddit API initialization failed: {e}")
             self.reddit = None
-            
+        
         # YouTube API setup
-        try:
-            if not YOUTUBE_API_KEY or YOUTUBE_API_KEY == "your_youtube_api_key_here":
-                print("⚠️ YouTube API key not configured")
-                self.youtube_available = False
-            else:
-                self.youtube_available = True
-                print("✅ YouTube API configured")
-                
-        except Exception as e:
-            print(f"❌ YouTube API setup failed: {e}")
-            self.youtube_available = False
-            
-        # Facebook API setup
-        try:
-            if not FACEBOOK_ACCESS_TOKEN or FACEBOOK_ACCESS_TOKEN == "your_facebook_access_token_here":
-                print("⚠️ Facebook access token not configured")
-                self.facebook_available = False
-            else:
-                self.facebook_available = True
-                print("✅ Facebook API configured")
-                
-        except Exception as e:
-            print(f"❌ Facebook API setup failed: {e}")
-            self.facebook_available = False
-            
-        # Instagram API setup
-        try:
-            if not INSTAGRAM_ACCESS_TOKEN or INSTAGRAM_ACCESS_TOKEN == "your_instagram_access_token_here":
-                print("⚠️ Instagram access token not configured")
-                self.instagram_available = False
-            else:
-                self.instagram_available = True
-                print("✅ Instagram API configured")
-                
-        except Exception as e:
-            print(f"❌ Instagram API setup failed: {e}")
-            self.instagram_available = False
+        self.youtube_api_key = getattr(self.config, 'youtube_api_key', None)
+        if self.youtube_api_key:
+            print("✅ YouTube API key found")
+        else:
+            print("⚠️ YouTube API key not configured")
     
-    def clean_text(self, text):
-        """Clean and normalize text"""
-        if not text:
-            return ""
-        
-        # Remove extra whitespace and newlines
-        text = re.sub(r'\s+', ' ', text.strip())
-        
-        # Remove very short posts (likely spam)
-        if len(text) < 10:
-            return ""
-            
-        return text
-    
-    def collect_reddit_data(self, keyword, limit=200):
-        """Collect Reddit posts/comments mentioning keywords - 5 years of data"""
-        print(f"Collecting Reddit data for keyword: '{keyword}' (Last 5 years)")
-        
+    def collect_reddit_posts(self, keyword, limit=100):
+        """Collect Reddit posts with enhanced search"""
         if not self.reddit:
-            print("Reddit API not available")
+            print("❌ Reddit API not available")
             return []
         
         posts = []
+        print(f"🔍 Searching Reddit for: '{keyword}'")
         
         try:
-            # Search across all subreddits for the last 5 years
-            # Reddit API doesn't support custom date ranges, so we'll get as much as possible
-            search_results = self.reddit.subreddit("all").search(
-                keyword, 
-                sort="new", 
-                time_filter="all",  # Get all historical posts
-                limit=limit  # Increased limit for 5 years
-            )
+            # Search across multiple subreddits
+            subreddits_to_search = [
+                'alcohol', 'rum', 'cocktails', 'bartenders', 'mixology', 
+                'drinks', 'liquor', 'spirits', 'party', 'nightlife',
+                'reviews', 'ProductReviews', 'BuyItForLife'
+            ]
             
-            five_years_ago = datetime.now() - timedelta(days=5*365)
+            # Search specific subreddits
+            for subreddit_name in subreddits_to_search[:5]:  # Limit to avoid rate limits
+                try:
+                    subreddit = self.reddit.subreddit(subreddit_name)
+                    
+                    # Search within subreddit
+                    for submission in subreddit.search(keyword, limit=20, time_filter='year'):
+                        # Skip if already processed
+                        if any(p.get('post_id') == submission.id for p in posts):
+                            continue
+                        
+                        post_data = {
+                            'post_id': submission.id,
+                            'platform': 'reddit',
+                            'text': f"{submission.title} {submission.selftext}".strip(),
+                            'author': str(submission.author) if submission.author else 'deleted',
+                            'timestamp': datetime.fromtimestamp(submission.created_utc).isoformat(),
+                            'subreddit': subreddit_name,
+                            'upvotes': submission.score,
+                            'comments': submission.num_comments,
+                            'url': f"https://reddit.com{submission.permalink}",
+                            'keyword_matched': keyword.lower(),
+                            'brand_category': self.categorize_brand(keyword)
+                        }
+                        
+                        if len(post_data['text']) > 10:  # Skip very short posts
+                            posts.append(post_data)
+                        
+                        # Collect top comments
+                        try:
+                            submission.comments.replace_more(limit=0)
+                            for comment in submission.comments.list()[:5]:  # Top 5 comments
+                                if hasattr(comment, 'body') and len(comment.body) > 20:
+                                    comment_data = {
+                                        'post_id': f"{submission.id}_{comment.id}",
+                                        'platform': 'reddit',
+                                        'text': comment.body,
+                                        'author': str(comment.author) if comment.author else 'deleted',
+                                        'timestamp': datetime.fromtimestamp(comment.created_utc).isoformat(),
+                                        'subreddit': subreddit_name,
+                                        'upvotes': comment.score,
+                                        'comments': 0,
+                                        'url': f"https://reddit.com{submission.permalink}",
+                                        'keyword_matched': keyword.lower(),
+                                        'brand_category': self.categorize_brand(keyword)
+                                    }
+                                    posts.append(comment_data)
+                        except:
+                            pass  # Skip comment collection if it fails
+                        
+                        if len(posts) >= limit:
+                            break
+                    
+                    time.sleep(1)  # Rate limiting
+                    
+                except Exception as e:
+                    print(f"⚠️ Error searching r/{subreddit_name}: {e}")
+                    continue
+                
+                if len(posts) >= limit:
+                    break
             
-            for submission in search_results:
-                # Check if post is within last 5 years
-                post_date = datetime.fromtimestamp(submission.created_utc)
-                if post_date < five_years_ago:
-                    continue
-                
-                # Skip deleted/removed posts
-                if submission.selftext == '[deleted]' or submission.selftext == '[removed]':
-                    continue
-                
-                # Combine title and text
-                full_text = submission.title
-                if submission.selftext:
-                    full_text += " " + submission.selftext
-                
-                clean_text = self.clean_text(full_text)
-                if not clean_text:
-                    continue
-                
-                post_data = {
-                    'platform': 'reddit',
-                    'post_id': submission.id,
-                    'text': clean_text,
-                    'author': str(submission.author) if submission.author else 'deleted',
-                    'timestamp': post_date,
-                    'upvotes': submission.score,
-                    'comments': submission.num_comments,
-                    'likes': 0,  # Reddit doesn't have likes
-                    'retweets': 0,  # Reddit doesn't have retweets
-                    'followers': 0,  # Reddit doesn't expose follower count
-                    'subreddit': submission.subreddit.display_name,
-                    'url': submission.url,
-                    'keyword_matched': keyword.lower()
-                }
-                
-                posts.append(post_data)
-                
-                # Small delay to be respectful
-                time.sleep(0.1)
-        
+            # Also search all of Reddit
+            try:
+                for submission in self.reddit.subreddit('all').search(keyword, limit=30, time_filter='year'):
+                    if any(p.get('post_id') == submission.id for p in posts):
+                        continue
+                    
+                    post_data = {
+                        'post_id': submission.id,
+                        'platform': 'reddit',
+                        'text': f"{submission.title} {submission.selftext}".strip(),
+                        'author': str(submission.author) if submission.author else 'deleted',
+                        'timestamp': datetime.fromtimestamp(submission.created_utc).isoformat(),
+                        'subreddit': submission.subreddit.display_name,
+                        'upvotes': submission.score,
+                        'comments': submission.num_comments,
+                        'url': f"https://reddit.com{submission.permalink}",
+                        'keyword_matched': keyword.lower(),
+                        'brand_category': self.categorize_brand(keyword)
+                    }
+                    
+                    if len(post_data['text']) > 10:
+                        posts.append(post_data)
+                    
+                    if len(posts) >= limit:
+                        break
+                        
+            except Exception as e:
+                print(f"⚠️ Error searching all of Reddit: {e}")
+            
+            print(f"✅ Collected {len(posts)} Reddit posts/comments for '{keyword}'")
+            return posts
+            
         except Exception as e:
-            print(f"Reddit collection error: {e}")
-        
-        print(f"✅ Collected {len(posts)} Reddit posts for '{keyword}' (last 5 years)")
-        return posts
-
+            print(f"❌ Reddit collection error for '{keyword}': {e}")
+            return []
+    
     def collect_youtube_comments(self, keyword, limit=100):
-        """Collect YouTube comments mentioning keywords - Extended search"""
-        print(f"Collecting YouTube comments for keyword: '{keyword}' (Extended search)")
-        
-        if not self.youtube_available:
-            print("YouTube API not available")
+        """Collect YouTube comments with enhanced search"""
+        if not self.youtube_api_key:
+            print("❌ YouTube API key not configured")
             return []
         
         comments = []
+        print(f"🔍 Searching YouTube for: '{keyword}'")
         
         try:
-            # Search for videos from the last 5 years
-            five_years_ago = datetime.now() - timedelta(days=5*365)
-            published_after = five_years_ago.strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-            # First, search for videos related to the keyword
+            # Search for videos
             search_url = "https://www.googleapis.com/youtube/v3/search"
             search_params = {
                 'part': 'snippet',
-                'q': keyword,
+                'q': f"{keyword} review taste alcohol rum",
                 'type': 'video',
-                'maxResults': 20,  # Search more videos for historical data
-                'key': YOUTUBE_API_KEY,
+                'maxResults': 20,
+                'key': self.youtube_api_key,
                 'order': 'relevance',
-                'publishedAfter': published_after  # Last 5 years
+                'publishedAfter': (datetime.now() - timedelta(days=365)).isoformat() + 'Z'
             }
             
             search_response = requests.get(search_url, params=search_params)
+            if search_response.status_code != 200:
+                print(f"❌ YouTube search failed: {search_response.status_code}")
+                return []
+            
             search_data = search_response.json()
+            video_ids = [item['id']['videoId'] for item in search_data.get('items', [])]
             
-            if 'error' in search_data:
-                print(f"YouTube API Error: {search_data['error']['message']}")
+            if not video_ids:
+                print(f"⚠️ No YouTube videos found for '{keyword}'")
                 return []
             
-            if 'items' not in search_data:
-                print(f"No videos found for '{keyword}' in last 5 years")
-                return []
-            
-            # For each video, get comments
-            for video in search_data['items'][:10]:  # Top 10 videos
-                video_id = video['id']['videoId']
-                video_title = video['snippet']['title']
-                video_date = datetime.fromisoformat(video['snippet']['publishedAt'].replace('Z', '+00:00'))
-                
-                # Get comments for this video
-                comments_url = "https://www.googleapis.com/youtube/v3/commentThreads"
-                comments_params = {
-                    'part': 'snippet',
-                    'videoId': video_id,
-                    'maxResults': min(limit // 10, 50),  # Distribute comments across videos
-                    'key': YOUTUBE_API_KEY,
-                    'order': 'relevance'
-                }
-                
-                comments_response = requests.get(comments_url, params=comments_params)
-                comments_data = comments_response.json()
-                
-                if 'error' in comments_data:
-                    print(f"Comments disabled for video: {video_title}")
-                    continue
-                
-                if 'items' in comments_data:
-                    for comment_thread in comments_data['items']:
-                        comment = comment_thread['snippet']['topLevelComment']['snippet']
-                        comment_date = datetime.fromisoformat(comment['publishedAt'].replace('Z', '+00:00'))
-                        
-                        # Check if comment is within last 5 years (fix timezone comparison)
-                        if comment_date.replace(tzinfo=None) < five_years_ago:
-                            continue
-                        
-                        clean_text = self.clean_text(comment['textDisplay'])
-                        if not clean_text:
-                            continue
-                        
-                        comment_data = {
-                            'platform': 'youtube',
-                            'post_id': comment_thread['id'],
-                            'text': clean_text,
-                            'author': comment['authorDisplayName'],
-                            'timestamp': comment_date.replace(tzinfo=None),
-                            'likes': comment['likeCount'],
-                            'retweets': 0,  # YouTube doesn't have retweets
-                            'comments': 0,  # This is already a comment
-                            'upvotes': comment['likeCount'],  # Use likes as upvotes
-                            'followers': 0,  # Not available via API
-                            'verified': False,  # Not easily available
-                            'location': "",
-                            'video_title': video_title,
-                            'video_id': video_id,
-                            'video_date': video_date.replace(tzinfo=None),
-                            'keyword_matched': keyword.lower()
-                        }
-                        
-                        comments.append(comment_data)
-                
-                time.sleep(1)  # Longer delay for historical data collection
-        
-        except Exception as e:
-            print(f"YouTube collection error: {e}")
-        
-        print(f"✅ Collected {len(comments)} YouTube comments for '{keyword}' (last 5 years)")
-        return comments
-
-    def collect_facebook_posts(self, keyword, limit=50):
-        """Collect Facebook posts mentioning keywords - Historical data"""
-        print(f"Collecting Facebook posts for keyword: '{keyword}' (Historical data)")
-        print("⚠️ Facebook requires special permissions for public content search")
-        
-        if not self.facebook_available:
-            print("Facebook API not available")
-            return []
-        
-        posts = []
-        
-        try:
-            # Check if we have a real token
-            if FACEBOOK_ACCESS_TOKEN == "your_facebook_access_token_here":
-                print("Facebook API not configured with real token - skipping")
-                return []
-            
-            print("Note: Facebook public content access is very limited without app review")
-            print("Attempting basic page search...")
-            
-            # Try to search for pages (this will likely fail without proper permissions)
-            search_url = f"https://graph.facebook.com/v18.0/search"
-            params = {
-                'q': keyword,
-                'type': 'page',
-                'access_token': FACEBOOK_ACCESS_TOKEN,
-                'limit': 5
-            }
-            
-            response = requests.get(search_url, params=params)
-            data = response.json()
-            
-            # Check for errors
-            if 'error' in data:
-                print(f"Facebook API Error: {data['error'].get('message', 'Unknown error')}")
-                print("This is expected - Facebook requires app review for public content access")
-                return []
-            
-            # If we get here, continue with existing logic but with better error handling
-            five_years_ago = datetime.now() - timedelta(days=5*365)
-            
-            if 'data' in data and len(data['data']) > 0:
-                print(f"Found {len(data['data'])} pages to check")
-                
-                for page in data['data'][:3]:  # Top 3 pages
-                    page_id = page['id']
-                    
-                    # Get posts from this page with date filtering
-                    posts_url = f"https://graph.facebook.com/v18.0/{page_id}/posts"
-                    posts_params = {
-                        'access_token': FACEBOOK_ACCESS_TOKEN,
-                        'fields': 'id,message,created_time,likes.summary(true),comments.summary(true)',
-                        'limit': limit // 3,  # Distribute across pages
-                        'since': five_years_ago.strftime('%Y-%m-%d')  # Last 5 years
+            # Get comments for each video
+            for video_id in video_ids[:10]:  # Limit to first 10 videos
+                try:
+                    comments_url = "https://www.googleapis.com/youtube/v3/commentThreads"
+                    comments_params = {
+                        'part': 'snippet',
+                        'videoId': video_id,
+                        'maxResults': 50,
+                        'key': self.youtube_api_key,
+                        'order': 'relevance'
                     }
                     
-                    posts_response = requests.get(posts_url, params=posts_params)
-                    posts_data = posts_response.json()
-                    
-                    if 'error' in posts_data:
-                        print(f"Error accessing page {page['name']}: {posts_data['error']['message']}")
+                    comments_response = requests.get(comments_url, params=comments_params)
+                    if comments_response.status_code != 200:
                         continue
                     
-                    if 'data' in posts_data:
-                        for post in posts_data['data']:
-                            if 'message' in post:
-                                clean_text = self.clean_text(post['message'])
-                                if not clean_text or keyword.lower() not in clean_text.lower():
-                                    continue
-                                
-                                post_date = datetime.fromisoformat(post['created_time'].replace('Z', '+00:00'))
-                                
-                                # Check if post is within last 5 years
-                                if post_date.replace(tzinfo=None) < five_years_ago:
-                                    continue
-                                
-                                post_data = {
-                                    'platform': 'facebook',
-                                    'post_id': post['id'],
-                                    'text': clean_text,
-                                    'author': page['name'],
-                                    'timestamp': post_date.replace(tzinfo=None),
-                                    'likes': post.get('likes', {}).get('summary', {}).get('total_count', 0),
-                                    'comments': post.get('comments', {}).get('summary', {}).get('total_count', 0),
-                                    'retweets': 0,  # Facebook doesn't have retweets
-                                    'upvotes': 0,
-                                    'followers': 0,
-                                    'verified': False,
-                                    'location': "",
-                                    'page_name': page['name'],
-                                    'keyword_matched': keyword.lower()
-                                }
-                                
-                                posts.append(post_data)
+                    comments_data = comments_response.json()
                     
-                    time.sleep(2)  # Delay between page requests
-            else:
-                print("No accessible pages found")
-                return []
+                    for item in comments_data.get('items', []):
+                        comment_snippet = item['snippet']['topLevelComment']['snippet']
+                        comment_text = comment_snippet['textDisplay']
+                        
+                        # Only collect relevant comments
+                        if any(term.lower() in comment_text.lower() for term in [keyword, 'taste', 'flavor', 'drink', 'good', 'bad']):
+                            comment_data = {
+                                'post_id': item['id'],
+                                'platform': 'youtube',
+                                'text': comment_text,
+                                'author': comment_snippet['authorDisplayName'],
+                                'timestamp': comment_snippet['publishedAt'],
+                                'video_id': video_id,
+                                'likes': comment_snippet.get('likeCount', 0),
+                                'comments': item['snippet'].get('totalReplyCount', 0),
+                                'url': f"https://youtube.com/watch?v={video_id}",
+                                'keyword_matched': keyword.lower(),
+                                'brand_category': self.categorize_brand(keyword)
+                            }
+                            
+                            if len(comment_text) > 15:  # Skip very short comments
+                                comments.append(comment_data)
+                        
+                        if len(comments) >= limit:
+                            break
+                    
+                    time.sleep(0.5)  # Rate limiting
+                    
+                except Exception as e:
+                    print(f"⚠️ Error getting comments for video {video_id}: {e}")
+                    continue
+                
+                if len(comments) >= limit:
+                    break
+            
+            print(f"✅ Collected {len(comments)} YouTube comments for '{keyword}'")
+            return comments
             
         except Exception as e:
-            print(f"Facebook collection error: {e}")
-            print("Note: Facebook API requires special permissions for public content access")
-        
-        print(f"✅ Collected {len(posts)} Facebook posts for '{keyword}' (last 5 years)")
-        return posts
-
-    def collect_instagram_posts(self, keyword, limit=50):
-        """Collect Instagram posts mentioning keywords - Historical data"""
-        print(f"Collecting Instagram posts for keyword: '{keyword}' (Historical data)")
-        print("⚠️ Instagram requires Business/Creator account and hashtag-based search")
-        
-        if not self.instagram_available:
-            print("Instagram API not available")
+            print(f"❌ YouTube collection error for '{keyword}': {e}")
             return []
-        
-        posts = []
-        
-        try:
-            # Check if we have real credentials
-            if INSTAGRAM_ACCESS_TOKEN == "your_instagram_access_token_here":
-                print("Instagram API not configured with real token - skipping")
-                return []
-            
-            print("Note: Instagram requires Business account and proper setup")
-            print("Skipping Instagram collection for now...")
-            
-            # For now, return empty list until proper Instagram Business API is set up
-            return []
-            
-            # TODO: Implement proper Instagram Business API integration
-            # This requires:
-            # 1. Instagram Business Account
-            # 2. Facebook Business Manager setup
-            # 3. Proper app permissions
-            # 4. Real Instagram User ID
-            
-        except Exception as e:
-            print(f"Instagram collection error: {e}")
-            print("Note: Instagram API requires Business account and proper app setup")
-        
-        print(f"✅ Collected {len(posts)} Instagram posts for '{keyword}' (last 5 years)")
-        return posts
     
-    def collect_all_brand_data(self, keywords=None, reddit_per_keyword=200, 
-                              youtube_per_keyword=100, facebook_per_keyword=50, instagram_per_keyword=50):
-        """Collect 5 years of data for all brand keywords across all platforms"""
-        if keywords is None:
-            keywords = BRAND_KEYWORDS  # Use all keywords for historical collection
+    def categorize_brand(self, keyword):
+        """Categorize brand for competitive analysis"""
+        keyword_lower = keyword.lower()
         
-        print(f"🚨 5-YEAR HISTORICAL DATA COLLECTION 🚨")
-        print(f"Collecting 5 years of data for {len(keywords)} keywords across all available platforms...")
-        print(f"Target per keyword:")
-        print(f"  - Reddit: {reddit_per_keyword} posts")
-        print(f"  - YouTube: {youtube_per_keyword} comments")
-        print(f"  - Facebook: {facebook_per_keyword} posts")
-        print(f"  - Instagram: {instagram_per_keyword} posts")
-        print("⚠️ This may take 30-60 minutes depending on data availability")
+        # Primary brand
+        if keyword_lower in ['bacardi']:
+            return 'primary'
+        
+        # Premium competitors
+        premium_brands = ['grey goose', 'hennessy', 'johnnie walker', 'chivas regal', 'macallan']
+        if any(brand in keyword_lower for brand in premium_brands):
+            return 'premium_competitor'
+        
+        # Direct competitors (rum/vodka)
+        direct_competitors = ['captain morgan', 'malibu', 'absolut', 'smirnoff', 'jose cuervo']
+        if any(brand in keyword_lower for brand in direct_competitors):
+            return 'direct_competitor'
+        
+        # Budget competitors
+        budget_brands = ['svedka', 'burnetts', 'new amsterdam', 'pinnacle']
+        if any(brand in keyword_lower for brand in budget_brands):
+            return 'budget_competitor'
+        
+        return 'other'
+    
+    def collect_competitor_data(self):
+        """Collect data for all competitors defined in config"""
+        print("🏆 Starting Comprehensive Competitor Analysis")
+        print("=" * 50)
+        
+        # Get competitor brands from config
+        competitor_brands = []
+        
+        # Add primary brand
+        competitor_brands.append('bacardi')
+        
+        # Add competitors from config if they exist
+        if hasattr(self.config, 'competitors'):
+            competitor_brands.extend(self.config.competitors)
+        else:
+            # Default competitor list
+            competitor_brands.extend([
+                'captain morgan', 'malibu', 'absolut vodka', 'smirnoff', 
+                'grey goose', 'hennessy', 'jose cuervo', 'johnnie walker'
+            ])
         
         all_posts = []
         
-        for i, keyword in enumerate(keywords, 1):
-            print(f"\n--- Processing keyword {i}/{len(keywords)}: '{keyword}' ---")
+        for brand in competitor_brands:
+            print(f"\n🎯 Analyzing: {brand.title()}")
+            print("-" * 30)
             
-            # Collect Reddit data - historical
-            if self.reddit:
-                try:
-                    reddit_posts = self.collect_reddit_data(keyword, reddit_per_keyword)
-                    all_posts.extend(reddit_posts)
-                    time.sleep(3)  # Longer delay for historical collection
-                except Exception as e:
-                    print(f"Failed to collect Reddit data for '{keyword}': {e}")
+            brand_posts = []
+            
+            # Collect Reddit data
+            reddit_posts = self.collect_reddit_posts(brand, limit=50)
+            if reddit_posts:
+                brand_posts.extend(reddit_posts)
+                print(f"  📊 Reddit: {len(reddit_posts)} posts")
+            
+            # Collect YouTube data
+            youtube_posts = self.collect_youtube_comments(brand, limit=50)
+            if youtube_posts:
+                brand_posts.extend(youtube_posts)
+                print(f"  📺 YouTube: {len(youtube_posts)} comments")
+            
+            # Save to database
+            if brand_posts:
+                saved_count = 0
+                for post in brand_posts:
+                    try:
+                        self.db.save_post(post)
+                        saved_count += 1
+                    except Exception as e:
+                        print(f"⚠️ Error saving post: {e}")
+                        continue
+                
+                print(f"  💾 Saved: {saved_count} posts to database")
+                all_posts.extend(brand_posts)
             else:
-                print("Skipping Reddit (API not available)")
+                print(f"  ⚠️ No data collected for {brand}")
             
-            # Collect YouTube comments - historical
-            if self.youtube_available:
-                try:
-                    youtube_comments = self.collect_youtube_comments(keyword, youtube_per_keyword)
-                    all_posts.extend(youtube_comments)
-                    time.sleep(3)
-                except Exception as e:
-                    print(f"Failed to collect YouTube data for '{keyword}': {e}")
-            else:
-                print("Skipping YouTube (API not available)")
-            
-            # Collect Facebook posts - historical
-            if self.facebook_available:
-                try:
-                    print("Attempting Facebook collection (may be limited)...")
-                    facebook_posts = self.collect_facebook_posts(keyword, facebook_per_keyword)
-                    if facebook_posts:
-                        all_posts.extend(facebook_posts)
-                        print(f"Successfully collected {len(facebook_posts)} Facebook posts")
-                    else:
-                        print("No Facebook posts collected (expected due to API limitations)")
-                    time.sleep(3)
-                except Exception as e:
-                    print(f"Facebook collection failed for '{keyword}': {e}")
-                    print("This is expected - Facebook requires special permissions for public content")
-            else:
-                print("Skipping Facebook (API not configured)")
-            
-            # Collect Instagram posts - historical  
-            if self.instagram_available:
-                try:
-                    print("Attempting Instagram collection (requires Business account)...")
-                    instagram_posts = self.collect_instagram_posts(keyword, instagram_per_keyword)
-                    if instagram_posts:
-                        all_posts.extend(instagram_posts)
-                        print(f"Successfully collected {len(instagram_posts)} Instagram posts")
-                    else:
-                        print("No Instagram posts collected (requires proper Business API setup)")
-                    time.sleep(3)
-                except Exception as e:
-                    print(f"Instagram collection failed for '{keyword}': {e}")
-                    print("This is expected - Instagram requires Business account setup")
-            else:
-                print("Skipping Instagram (API not configured)")
-            
-            # Progress update
-            if i < len(keywords):
-                print(f"Completed {i}/{len(keywords)} keywords. Pausing 15 seconds before next keyword...")
-                time.sleep(15)
+            # Rate limiting between brands
+            time.sleep(2)
         
-        print(f"\n🎉 5-year historical data collection complete!")
-        print(f"Total posts collected: {len(all_posts)}")
+        print(f"\n🎉 Competitor Analysis Complete!")
+        print(f"📊 Total posts collected: {len(all_posts)}")
+        print(f"🏢 Brands analyzed: {len(competitor_brands)}")
         
-        # Summary by platform and year
-        platform_counts = {}
-        yearly_counts = {}
-        
-        for post in all_posts:
-            platform = post['platform']
-            platform_counts[platform] = platform_counts.get(platform, 0) + 1
-            
-            year = post['timestamp'].year
-            yearly_counts[year] = yearly_counts.get(year, 0) + 1
-        
-        print("\nPlatform breakdown:")
-        for platform, count in platform_counts.items():
-            print(f"  - {platform.title()}: {count} posts")
-        
-        print("\nYearly breakdown:")
-        for year in sorted(yearly_counts.keys()):
-            print(f"  - {year}: {yearly_counts[year]} posts")
+        # Generate summary report
+        self.generate_competitor_summary(competitor_brands)
         
         return all_posts
     
-    def get_api_status(self):
-        """Check which APIs are working"""
-        status = {
-            'reddit': self.reddit is not None,
-            'youtube': self.youtube_available,
-            'facebook': self.facebook_available,
-            'instagram': self.instagram_available
-        }
+    def generate_competitor_summary(self, brands):
+        """Generate a summary of competitor data collection"""
+        print(f"\n📋 COMPETITOR ANALYSIS SUMMARY")
+        print("=" * 40)
         
-        print("\n--- API Status ---")
-        print(f"Reddit API: {'✅ Connected' if status['reddit'] else '❌ Not available'}")
-        print(f"YouTube API: {'✅ Connected' if status['youtube'] else '❌ Not available'}")
-        print(f"Facebook API: {'✅ Connected' if status['facebook'] else '❌ Not available'}")
-        print(f"Instagram API: {'✅ Connected' if status['instagram'] else '❌ Not available'}")
+        try:
+            conn = sqlite3.connect(self.db.db_path)
+            
+            for brand in brands:
+                query = '''
+                SELECT 
+                    COUNT(*) as total_posts,
+                    COUNT(DISTINCT platform) as platforms,
+                    AVG(CASE WHEN platform = 'reddit' THEN upvotes ELSE likes END) as avg_engagement,
+                    MIN(timestamp) as earliest_post,
+                    MAX(timestamp) as latest_post
+                FROM social_posts 
+                WHERE LOWER(keyword_matched) = LOWER(?)
+                '''
+                
+                cursor = conn.execute(query, (brand,))
+                result = cursor.fetchone()
+                
+                if result and result[0] > 0:
+                    print(f"\n🎯 {brand.title()}:")
+                    print(f"   📊 Posts: {result[0]}")
+                    print(f"   🌐 Platforms: {result[1]}")
+                    print(f"   👍 Avg Engagement: {result[2]:.1f}" if result[2] else "   👍 Avg Engagement: N/A")
+                    print(f"   📅 Date Range: {result[3][:10] if result[3] else 'N/A'} to {result[4][:10] if result[4] else 'N/A'}")
+            
+            # Overall summary
+            summary_query = '''
+            SELECT 
+                brand_category,
+                COUNT(*) as posts,
+                COUNT(DISTINCT keyword_matched) as brands
+            FROM social_posts 
+            WHERE brand_category IS NOT NULL
+            GROUP BY brand_category
+            ORDER BY posts DESC
+            '''
+            
+            cursor = conn.execute(summary_query)
+            results = cursor.fetchall()
+            
+            if results:
+                print(f"\n📈 CATEGORY BREAKDOWN:")
+                for row in results:
+                    print(f"   {row[0].title().replace('_', ' ')}: {row[1]} posts ({row[2]} brands)")
+            
+            conn.close()
+            
+        except Exception as e:
+            print(f"⚠️ Error generating summary: {e}")
         
-        return status
-
-
-def test_collector():
-    """Test the data collector with a small sample"""
-    print("Testing Social Media Collector...")
-    print("=" * 50)
+        print(f"\n✅ Data collection complete!")
+        print(f"💡 Run sentiment analysis: python analyze_sentiment_final.py")
+        print(f"📊 View dashboard: streamlit run dashboard.py")
     
-    collector = SocialMediaCollector()
-    
-    # Check API status first
-    status = collector.get_api_status()
-    
-    if not any(status.values()):
-        print("\n❌ No APIs available. Please check your credentials.")
-        return []
-    
-    # Test with one keyword and small limits
-    print(f"\nTesting with keyword 'bacardi' (Test Mode - Small Sample)...")
-    test_posts = collector.collect_all_brand_data(
-        keywords=['bacardi'],  # Only 1 keyword for testing
-        reddit_per_keyword=10,  # Small samples for testing
-        youtube_per_keyword=8,
-        facebook_per_keyword=5,
-        instagram_per_keyword=5
-    )
-    
-    if test_posts:
-        print("\n--- Sample Posts ---")
-        for i, post in enumerate(test_posts[:3]):
-            print(f"\nPost {i+1}:")
-            print(f"Platform: {post['platform']}")
-            print(f"Author: {post['author']}")
-            print(f"Text: {post['text'][:100]}...")
-            print(f"Timestamp: {post['timestamp']}")
-            if post['platform'] == 'reddit':
-                print(f"Upvotes: {post['upvotes']}, Comments: {post['comments']}")
-            elif post['platform'] == 'youtube':
-                print(f"Video: {post.get('video_title', 'N/A')}, Likes: {post['likes']}")
-            elif post['platform'] == 'facebook':
-                print(f"Page: {post.get('page_name', 'N/A')}, Likes: {post['likes']}")
-            elif post['platform'] == 'instagram':
-                print(f"Hashtag: {post.get('hashtag', 'N/A')}, Likes: {post['likes']}")
-    
-    return test_posts
-
-
-def collect_and_save():
-    """Collect 5 years of data and save to database"""
-    try:
-        from database import DatabaseManager
-    except ImportError:
-        print("❌ Database module not found. Make sure database.py exists.")
-        return []
-    
-    print("Starting 5-year historical data collection and save process...")
-    print("=" * 50)
-    
-    # Initialize
-    collector = SocialMediaCollector()
-    db = DatabaseManager()
-    
-    # Check API status
-    status = collector.get_api_status()
-    if not any(status.values()):
-        print("\n❌ No APIs available. Cannot collect data.")
-        return []
-    
-    # Collect 5 years of data - FULL COLLECTION
-    posts = collector.collect_all_brand_data(
-        keywords=BRAND_KEYWORDS,  # All brand keywords
-        reddit_per_keyword=200,   # 200 Reddit posts per keyword
-        youtube_per_keyword=100,  # 100 YouTube comments per keyword
-        facebook_per_keyword=50,  # 50 Facebook posts per keyword
-        instagram_per_keyword=50  # 50 Instagram posts per keyword
-    )
-    
-    if posts:
-        # Save to database
-        saved_count = db.save_posts(posts)
+    def collect_historical_data(self, days_back=365):
+        """Collect historical data for comprehensive analysis"""
+        print(f"📅 Collecting Historical Data ({days_back} days)")
+        print("=" * 50)
         
-        print(f"\n✅ Saved {saved_count} posts to database!")
+        # Collect competitor data
+        all_posts = self.collect_competitor_data()
         
-        # Show database stats
-        stats = db.get_database_stats()
-        print(f"Total posts in database: {stats['total_posts']}")
-        print(f"Platform breakdown: {stats['platform_breakdown']}")
+        # Additional targeted searches
+        targeted_keywords = [
+            'rum review', 'vodka comparison', 'best rum brand', 
+            'alcohol taste test', 'cocktail recommendations'
+        ]
         
-        return posts
-    else:
-        print("\n❌ No posts collected")
-        return []
+        print(f"\n🎯 Collecting Targeted Content")
+        print("-" * 30)
+        
+        for keyword in targeted_keywords:
+            print(f"\n🔍 Searching: '{keyword}'")
+            
+            # Reddit search
+            reddit_posts = self.collect_reddit_posts(keyword, limit=25)
+            if reddit_posts:
+                for post in reddit_posts:
+                    post['keyword_matched'] = keyword
+                    post['brand_category'] = 'general'
+                    try:
+                        self.db.save_post(post)
+                    except:
+                        pass
+                print(f"  📊 Reddit: {len(reddit_posts)} posts")
+            
+            # YouTube search
+            youtube_posts = self.collect_youtube_comments(keyword, limit=25)
+            if youtube_posts:
+                for post in youtube_posts:
+                    post['keyword_matched'] = keyword
+                    post['brand_category'] = 'general'
+                    try:
+                        self.db.save_post(post)
+                    except:
+                        pass
+                print(f"  📺 YouTube: {len(youtube_posts)} comments")
+            
+            all_posts.extend(reddit_posts)
+            all_posts.extend(youtube_posts)
+            
+            time.sleep(1)  # Rate limiting
+        
+        print(f"\n🎉 Historical Data Collection Complete!")
+        print(f"📊 Total posts collected: {len(all_posts)}")
+        
+        return all_posts
 
-
-if __name__ == "__main__":
-    print("Bacardi Social Media Data Collector - 5 Year Historical Analysis")
+def main():
+    """Main execution function"""
+    print("🚀 Enhanced Bacardi Sentiment Analysis Data Collector")
+    print("🏆 With Comprehensive Competitor Analysis")
     print("=" * 60)
     
-    # Show current config status
-    print(f"Reddit Credentials: {'✅ Loaded' if REDDIT_CLIENT_ID and REDDIT_CLIENT_ID != 'your_reddit_client_id' else '❌ Not configured'}")
-    print(f"YouTube API Key: {'✅ Loaded' if YOUTUBE_API_KEY and YOUTUBE_API_KEY != 'your_youtube_api_key_here' else '❌ Not configured'}")
-    print(f"Facebook Token: {'✅ Loaded' if FACEBOOK_ACCESS_TOKEN and FACEBOOK_ACCESS_TOKEN != 'your_facebook_access_token_here' else '❌ Not configured'}")
-    print(f"Instagram Token: {'✅ Loaded' if INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_ACCESS_TOKEN != 'your_instagram_access_token_here' else '❌ Not configured'}")
+    collector = EnhancedDataCollector()
     
-    choice = input("""
-    Choose an option:
-    1. Test collector (small sample - quick test)
-    2. Collect 5 years of data and save to database (FULL COLLECTION - 30-60 mins)
-    3. Check API status only
-    4. Collect from specific platform only (5 years)
-    5. Exit
+    # Choose collection type
+    print("\n📋 Collection Options:")
+    print("1. Full Competitor Analysis (Recommended)")
+    print("2. Historical Data Collection (365 days)")
+    print("3. Quick Bacardi-only Collection")
     
-    Enter choice (1-5): """)
+    choice = input("\nSelect option (1-3): ").strip()
     
     if choice == "1":
-        posts = test_collector()
-        if posts:
-            print(f"\n✅ Test successful! Collected {len(posts)} posts")
-        else:
-            print("\n❌ Test failed. Check API credentials.")
-    
+        # Full competitor analysis
+        collector.collect_competitor_data()
     elif choice == "2":
-        print("⚠️ WARNING: This will collect 5 years of historical data.")
-        print("This process may take 30-60 minutes and use significant API quota.")
-        confirm = input("Are you sure you want to proceed? (yes/no): ")
-        
-        if confirm.lower() == 'yes':
-            posts = collect_and_save()
-            if posts:
-                print("\n🎉 Ready to run dashboard: streamlit run dashboard.py")
-            else:
-                print("\n❌ Collection failed. Check API credentials.")
-        else:
-            print("Collection cancelled.")
-    
+        # Historical data collection
+        collector.collect_historical_data()
     elif choice == "3":
-        collector = SocialMediaCollector()
-        collector.get_api_status()
-    
-    elif choice == "4":
-        platform_choice = input("""
-        Choose platform (5-year collection):
-        1. Reddit only  
-        2. YouTube only
-        3. Facebook only
-        4. Instagram only
+        # Quick Bacardi collection
+        print("\n🎯 Quick Bacardi Collection")
+        all_posts = []
         
-        Enter choice (1-4): """)
+        reddit_posts = collector.collect_reddit_posts('bacardi', limit=100)
+        youtube_posts = collector.collect_youtube_comments('bacardi', limit=100)
         
-        collector = SocialMediaCollector()
+        all_posts.extend(reddit_posts)
+        all_posts.extend(youtube_posts)
         
-        # Import database components with error handling
-        try:
-            from database import DatabaseManager
-            db = DatabaseManager()
-        except ImportError:
-            print("❌ Database module not found. Make sure database.py exists.")
-            db = None
-        
-        posts = []
-        
-        print("⚠️ Collecting 5 years of data for single platform...")
-        
-        if platform_choice == "1" and collector.reddit:
-            posts = collector.collect_reddit_data('bacardi', 300)  # More for single platform
-        elif platform_choice == "2" and collector.youtube_available:
-            posts = collector.collect_youtube_comments('bacardi', 150)
-        elif platform_choice == "3" and collector.facebook_available:
-            posts = collector.collect_facebook_posts('bacardi', 100)
-        elif platform_choice == "4" and collector.instagram_available:
-            posts = collector.collect_instagram_posts('bacardi', 100)
-        else:
-            print("Platform not available or invalid choice")
-            
-        if posts and db:
-            # Add sentiment analysis
+        # Save posts
+        saved_count = 0
+        for post in all_posts:
             try:
-                from sentiment_analyzer import SentimentAnalyzer
-                analyzer = SentimentAnalyzer()
-                
-                print("Analyzing sentiment...")
-                for post in posts:
-                    sentiment = analyzer.analyze_sentiment(post['text'])
-                    post.update(sentiment)
-                
-                saved_count = db.save_posts(posts)
-                print(f"\n✅ Saved {saved_count} posts from single platform (5 years)!")
-            except ImportError:
-                print("❌ SentimentAnalyzer not found. Posts collected but not analyzed.")
-                print(f"Collected {len(posts)} posts - you can analyze them later")
-                
-                # Save without sentiment analysis
-                saved_count = db.save_posts(posts)
-                print(f"✅ Saved {saved_count} posts without sentiment analysis")
-        elif posts:
-            print(f"✅ Collected {len(posts)} posts but couldn't save to database")
-            print("Posts collected successfully - database module not available")
-        else:
-            print("❌ No posts collected or platform not available")
-    
-    elif choice == "5":
-        print("Goodbye!")
-    
+                collector.db.save_post(post)
+                saved_count += 1
+            except:
+                pass
+        
+        print(f"\n✅ Collected and saved {saved_count} posts")
     else:
-        print("Invalid choice")
+        print("❌ Invalid choice. Exiting.")
+        return
+    
+    print(f"\n🎯 Next Steps:")
+    print(f"1. Run sentiment analysis: python analyze_sentiment.py")
+    print(f"2. View dashboard: streamlit run dashboard.py")
+    print(f"3. Check database: {collector.db.db_path}")
+
+if __name__ == "__main__":
+    main()
