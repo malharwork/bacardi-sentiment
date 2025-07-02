@@ -6,7 +6,6 @@ import os
 class DatabaseManager:
     def __init__(self, db_path="data/bacardi_posts.db"):
         self.db_path = db_path
-        # Create data directory if it doesn't exist
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.init_database()
     
@@ -15,7 +14,6 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Main social posts table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS social_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

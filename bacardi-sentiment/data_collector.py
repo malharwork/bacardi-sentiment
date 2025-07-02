@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import time
 import random
-from config import Config
+from config import config
 from database import DatabaseManager
 
 class EnhancedDataCollector:
