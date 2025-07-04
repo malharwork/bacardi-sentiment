@@ -4,20 +4,17 @@ import sqlite3
 from datetime import datetime, timedelta
 import time
 import random
-from config import config
+import config  
 from database import DatabaseManager
 
 class EnhancedDataCollector:
     def __init__(self):
-        self.config = Config()
         self.db = DatabaseManager()
-        
-        # Initialize Reddit API
         try:
             self.reddit = praw.Reddit(
-                client_id=self.config.reddit_client_id,
-                client_secret=self.config.reddit_client_secret,
-                user_agent=self.config.reddit_user_agent
+                client_id=config.REDDIT_CLIENT_ID,
+                client_secret=config.REDDIT_CLIENT_SECRET,
+                user_agent="BacardiSentimentBot/1.0"
             )
             print("✅ Reddit API initialized successfully")
         except Exception as e:
@@ -25,7 +22,7 @@ class EnhancedDataCollector:
             self.reddit = None
         
         # YouTube API setup
-        self.youtube_api_key = getattr(self.config, 'youtube_api_key', None)
+        self.youtube_api_key = getattr(config, 'YOUTUBE_API_KEY', None)
         if self.youtube_api_key:
             print("✅ YouTube API key found")
         else:
@@ -265,6 +262,42 @@ class EnhancedDataCollector:
         
         return 'other'
     
+    def save_post(self, post_data):
+        """Save a single post to database"""
+        conn = sqlite3.connect(self.db.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT OR IGNORE INTO social_posts 
+                (platform, post_id, text, author, timestamp, likes, 
+                 comments, upvotes, url, keyword_matched, brand_category, subreddit, video_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                post_data.get('platform'),
+                post_data.get('post_id'),
+                post_data.get('text'),
+                post_data.get('author'),
+                post_data.get('timestamp'),
+                post_data.get('likes', 0),
+                post_data.get('comments', 0),
+                post_data.get('upvotes', 0),
+                post_data.get('url'),
+                post_data.get('keyword_matched'),
+                post_data.get('brand_category'),
+                post_data.get('subreddit'),
+                post_data.get('video_id')
+            ))
+            
+            conn.commit()
+            return cursor.rowcount > 0
+            
+        except Exception as e:
+            print(f"Error saving post: {e}")
+            return False
+        finally:
+            conn.close()
+    
     def collect_competitor_data(self):
         """Collect data for all competitors defined in config"""
         print("🏆 Starting Comprehensive Competitor Analysis")
@@ -277,8 +310,8 @@ class EnhancedDataCollector:
         competitor_brands.append('bacardi')
         
         # Add competitors from config if they exist
-        if hasattr(self.config, 'competitors'):
-            competitor_brands.extend(self.config.competitors)
+        if hasattr(config, 'COMPETITORS'):
+            competitor_brands.extend(config.COMPETITORS)
         else:
             # Default competitor list
             competitor_brands.extend([
@@ -311,8 +344,8 @@ class EnhancedDataCollector:
                 saved_count = 0
                 for post in brand_posts:
                     try:
-                        self.db.save_post(post)
-                        saved_count += 1
+                        if self.save_post(post):
+                            saved_count += 1
                     except Exception as e:
                         print(f"⚠️ Error saving post: {e}")
                         continue
@@ -390,7 +423,7 @@ class EnhancedDataCollector:
             print(f"⚠️ Error generating summary: {e}")
         
         print(f"\n✅ Data collection complete!")
-        print(f"💡 Run sentiment analysis: python analyze_sentiment_final.py")
+        print(f"💡 Run sentiment analysis: python analyze_sentiment.py")
         print(f"📊 View dashboard: streamlit run dashboard.py")
     
     def collect_historical_data(self, days_back=365):
@@ -420,7 +453,7 @@ class EnhancedDataCollector:
                     post['keyword_matched'] = keyword
                     post['brand_category'] = 'general'
                     try:
-                        self.db.save_post(post)
+                        self.save_post(post)
                     except:
                         pass
                 print(f"  📊 Reddit: {len(reddit_posts)} posts")
@@ -432,7 +465,7 @@ class EnhancedDataCollector:
                     post['keyword_matched'] = keyword
                     post['brand_category'] = 'general'
                     try:
-                        self.db.save_post(post)
+                        self.save_post(post)
                     except:
                         pass
                 print(f"  📺 YouTube: {len(youtube_posts)} comments")
@@ -484,8 +517,8 @@ def main():
         saved_count = 0
         for post in all_posts:
             try:
-                collector.db.save_post(post)
-                saved_count += 1
+                if collector.save_post(post):
+                    saved_count += 1
             except:
                 pass
         

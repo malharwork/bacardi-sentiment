@@ -6,6 +6,7 @@ import os
 class DatabaseManager:
     def __init__(self, db_path="data/bacardi_posts.db"):
         self.db_path = db_path
+        # Create data directory if it doesn't exist
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.init_database()
     
@@ -14,6 +15,7 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        # Main social posts table with all necessary fields
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS social_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,15 +26,25 @@ class DatabaseManager:
                 timestamp DATETIME,
                 sentiment_score REAL,
                 sentiment_label TEXT,
-                confidence REAL,
+                confidence_score REAL,
                 engagement_score REAL,
                 likes INTEGER DEFAULT 0,
                 retweets INTEGER DEFAULT 0,
                 comments INTEGER DEFAULT 0,
+                upvotes INTEGER DEFAULT 0,
                 followers INTEGER DEFAULT 0,
+                url TEXT,
+                keyword_matched TEXT,
+                brand_category TEXT,
+                subreddit TEXT,
+                video_id TEXT,
+                verified BOOLEAN DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Add missing columns to existing table if they don't exist
+        self._add_missing_columns(cursor)
         
         # Daily summary table for trends
         cursor.execute('''
@@ -65,6 +77,74 @@ class DatabaseManager:
         conn.close()
         print(f"Database initialized at: {self.db_path}")
     
+    def _add_missing_columns(self, cursor):
+        """Add missing columns to existing table"""
+        # Get existing columns
+        cursor.execute("PRAGMA table_info(social_posts)")
+        existing_columns = [column[1] for column in cursor.fetchall()]
+        
+        # Define new columns that might be missing
+        new_columns = [
+            ('url', 'TEXT'),
+            ('keyword_matched', 'TEXT'),
+            ('brand_category', 'TEXT'),
+            ('subreddit', 'TEXT'),
+            ('video_id', 'TEXT'),
+            ('verified', 'BOOLEAN DEFAULT 0'),
+            ('upvotes', 'INTEGER DEFAULT 0'),
+            ('engagement_score', 'REAL'),
+            ('confidence_score', 'REAL')
+        ]
+        
+        # Add missing columns
+        for column_name, column_type in new_columns:
+            if column_name not in existing_columns:
+                try:
+                    cursor.execute(f'ALTER TABLE social_posts ADD COLUMN {column_name} {column_type}')
+                    print(f"Added column: {column_name}")
+                except Exception as e:
+                    print(f"Error adding column {column_name}: {e}")
+    
+    def save_post(self, post_data):
+        """Save a single post to database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            engagement_score = self._calculate_engagement_score(post_data)
+            
+            cursor.execute('''
+                INSERT OR IGNORE INTO social_posts 
+                (platform, post_id, text, author, timestamp, likes, 
+                 comments, upvotes, url, keyword_matched, brand_category, 
+                 subreddit, video_id, engagement_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                post_data.get('platform'),
+                post_data.get('post_id'),
+                post_data.get('text'),
+                post_data.get('author'),
+                post_data.get('timestamp'),
+                post_data.get('likes', 0),
+                post_data.get('comments', 0),
+                post_data.get('upvotes', 0),
+                post_data.get('url'),
+                post_data.get('keyword_matched'),
+                post_data.get('brand_category'),
+                post_data.get('subreddit'),
+                post_data.get('video_id'),
+                engagement_score
+            ))
+            
+            conn.commit()
+            return cursor.rowcount > 0
+            
+        except Exception as e:
+            print(f"Error saving post: {e}")
+            return False
+        finally:
+            conn.close()
+    
     def save_posts(self, posts_data):
         """Save analyzed posts to database"""
         if not posts_data:
@@ -85,9 +165,10 @@ class DatabaseManager:
                 cursor.execute('''
                     INSERT OR IGNORE INTO social_posts 
                     (platform, post_id, text, author, timestamp, sentiment_score, 
-                     sentiment_label, confidence, engagement_score, likes, retweets, 
-                     comments, followers)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     sentiment_label, confidence_score, engagement_score, likes, retweets, 
+                     comments, upvotes, followers, url, keyword_matched, brand_category, 
+                     subreddit, video_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     post.get('platform'),
                     post.get('post_id'),
@@ -96,12 +177,18 @@ class DatabaseManager:
                     post.get('timestamp'),
                     post.get('sentiment_score'),
                     post.get('sentiment_label'),
-                    post.get('confidence'),
+                    post.get('confidence_score'),
                     engagement_score,
                     post.get('likes', 0),
                     post.get('retweets', 0),
                     post.get('comments', 0),
-                    post.get('followers', 0)
+                    post.get('upvotes', 0),
+                    post.get('followers', 0),
+                    post.get('url'),
+                    post.get('keyword_matched'),
+                    post.get('brand_category'),
+                    post.get('subreddit'),
+                    post.get('video_id')
                 ))
                 
                 if cursor.rowcount > 0:
@@ -131,6 +218,11 @@ class DatabaseManager:
             upvotes = post.get('upvotes', 0)
             comments = post.get('comments', 0)
             return upvotes + comments * 2
+        
+        elif post.get('platform') == 'youtube':
+            likes = post.get('likes', 0)
+            comments = post.get('comments', 0)
+            return likes + comments * 3
         
         return 0
     
@@ -182,7 +274,7 @@ class DatabaseManager:
         
         query = '''
             SELECT platform, text, sentiment_label, sentiment_score, 
-                   timestamp, author, likes, retweets, comments
+                   timestamp, author, likes, retweets, comments, upvotes
             FROM social_posts 
             ORDER BY timestamp DESC 
             LIMIT ?
@@ -222,6 +314,7 @@ class DatabaseManager:
         cursor.execute('''
             SELECT sentiment_label, COUNT(*) 
             FROM social_posts 
+            WHERE sentiment_label IS NOT NULL
             GROUP BY sentiment_label
         ''')
         sentiment_breakdown = dict(cursor.fetchall())
