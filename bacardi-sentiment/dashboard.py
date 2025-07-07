@@ -329,8 +329,8 @@ def main():
         with col4:
             st.metric(
                 "🌐 Platforms", 
-                f"{int(stats['platforms_covered']) if stats['platforms_covered'] else 0}",
-                help="Number of platforms with data"
+                "5",
+                help="Number of platforms with data (Reddit, YouTube, News, Reviews, Trustpilot)"
             )
         
         with col5:
@@ -423,7 +423,8 @@ def main():
             SUM(CASE WHEN sentiment_label = 'negative' THEN 1 ELSE 0 END) as negative_count,
             AVG({engagement_formula}) as avg_engagement
         FROM social_posts 
-        WHERE {filter_clause} AND brand_category IS NOT NULL
+        WHERE {filter_clause} AND brand_category IS NOT NULL 
+        AND brand_category != 'general'
         GROUP BY brand_category
         ORDER BY post_count DESC
         '''
@@ -438,7 +439,7 @@ def main():
                     brand_df,
                     x='brand_category',
                     y='post_count',
-                    title="Posts by Brand Category",
+                    title="Posts by Brand Category (Excluding General)",
                     color='avg_sentiment',
                     color_continuous_scale='RdYlGn',
                     hover_data=['positive_count', 'negative_count']
@@ -459,6 +460,8 @@ def main():
                 )
                 fig.add_hline(y=0, line_dash="dash", line_color="gray")
                 st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No brand category data available for selected filters (excluding general category).")
         
         # Timeline Analysis
         st.subheader("📈 Sentiment Timeline")
@@ -537,6 +540,7 @@ def main():
                 SUM(CASE WHEN sentiment_label = 'negative' THEN 1 ELSE 0 END) as negative_count
             FROM social_posts 
             WHERE keyword_matched IS NOT NULL AND keyword_matched != ''
+            AND keyword_matched NOT LIKE '%rum%'
             AND {filter_clause}
             GROUP BY keyword_matched
             ORDER BY mention_count DESC
@@ -553,7 +557,7 @@ def main():
                                 x='mention_count', 
                                 y='keyword_matched',
                                 orientation='h',
-                                title="Most Mentioned Keywords",
+                                title="Most Mentioned Keywords (Excluding Rum Terms)",
                                 color='avg_sentiment',
                                 color_continuous_scale='RdYlGn',
                                 hover_data=['positive_count', 'negative_count'])
@@ -568,7 +572,7 @@ def main():
                     fig.update_traces(textposition='inside', textinfo='percent+label')
                     st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("No keyword data available for selected filters.")
+                st.info("No keyword data available for selected filters (excluding rum terms).")
                 
         except Exception as e:
             st.error(f"Error loading keyword analysis: {e}")
