@@ -474,7 +474,10 @@ def main():
             SUM(CASE WHEN sentiment_label = 'positive' THEN 1 ELSE 0 END) as positive_count,
             SUM(CASE WHEN sentiment_label = 'negative' THEN 1 ELSE 0 END) as negative_count
         FROM social_posts 
-        WHERE {filter_clause} AND timestamp IS NOT NULL
+        WHERE {filter_clause} 
+        AND timestamp IS NOT NULL 
+        AND timestamp != ''
+        AND timestamp != 'null'
         GROUP BY DATE(timestamp)
         ORDER BY date DESC
         LIMIT 30
@@ -487,7 +490,7 @@ def main():
             
             fig = make_subplots(
                 rows=2, cols=1,
-                subplot_titles=('Daily Average Sentiment', 'Daily Post Volume'),
+                subplot_titles=('Daily Average Sentiment (Valid Dates Only)', 'Daily Post Volume (Valid Dates Only)'),
                 vertical_spacing=0.1
             )
             
@@ -518,7 +521,7 @@ def main():
             
             fig.update_layout(
                 height=600,
-                title_text="Daily Sentiment & Volume Trends (Last 30 days)",
+                title_text="Daily Sentiment & Volume Trends (Excluding NULL Timestamps)",
                 showlegend=True
             )
             
@@ -527,6 +530,28 @@ def main():
             fig.update_yaxes(title_text="Post Count", row=2, col=1)
             
             st.plotly_chart(fig, use_container_width=True)
+            
+            # Add info about data quality
+            conn_temp = sqlite3.connect(db.db_path)
+            data_quality_query = '''
+            SELECT 
+                COUNT(*) as total_posts,
+                SUM(CASE WHEN timestamp IS NOT NULL AND timestamp != '' AND timestamp != 'null' THEN 1 ELSE 0 END) as posts_with_valid_dates,
+                SUM(CASE WHEN timestamp IS NULL OR timestamp = '' OR timestamp = 'null' THEN 1 ELSE 0 END) as posts_with_null_dates
+            FROM social_posts
+            '''
+            quality_result = pd.read_sql_query(data_quality_query, conn_temp)
+            conn_temp.close()
+            
+            if not quality_result.empty:
+                total = quality_result.iloc[0]['total_posts']
+                valid = quality_result.iloc[0]['posts_with_valid_dates']
+                null_dates = quality_result.iloc[0]['posts_with_null_dates']
+                
+                st.info(f"📊 Data Quality: {valid:,} posts with valid dates, {null_dates:,} posts with missing timestamps out of {total:,} total posts")
+        else:
+            st.warning("⚠️ No posts with valid timestamps found for the selected filters.")
+            st.info("💡 Most posts in the database appear to have NULL timestamps. This is likely due to data collection issues where timestamp data wasn't properly captured.")
         
         # Keyword Analysis
         st.subheader("🔥 Keyword Analysis")
@@ -635,13 +660,23 @@ def main():
                 END as text_preview,
                 sentiment_label,
                 ROUND(sentiment_score, 3) as sentiment_score,
-                DATETIME(timestamp) as timestamp,
+                CASE 
+                    WHEN timestamp IS NOT NULL AND timestamp != '' AND timestamp != 'null' 
+                    THEN DATETIME(timestamp)
+                    ELSE 'No date available'
+                END as timestamp,
                 brand_category,
                 keyword_matched,
                 ({engagement_formula}) as engagement
             FROM social_posts 
             WHERE {filter_clause}
-            ORDER BY timestamp DESC 
+            ORDER BY 
+                CASE 
+                    WHEN timestamp IS NOT NULL AND timestamp != '' AND timestamp != 'null' 
+                    THEN timestamp 
+                    ELSE '1900-01-01' 
+                END DESC,
+                id DESC
             LIMIT 20
             '''
             
@@ -658,6 +693,11 @@ def main():
                 
                 styled_df = recent_df.style.apply(highlight_sentiment, axis=1)
                 st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                
+                # Show data quality info
+                null_timestamp_count = len(recent_df[recent_df['timestamp'] == 'No date available'])
+                if null_timestamp_count > 0:
+                    st.warning(f"⚠️ {null_timestamp_count} out of {len(recent_df)} recent posts have missing timestamps")
             else:
                 st.info("No recent posts available.")
                 
